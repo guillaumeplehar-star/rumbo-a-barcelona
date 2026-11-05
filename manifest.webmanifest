@@ -1,0 +1,14 @@
+{
+  "name": "Rumbo a Barcelona",
+  "short_name": "Rumbo BCN",
+  "description": "Apprendre l'espagnol d'Espagne avant de partir vivre à Barcelone.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbf6ef",
+  "theme_color": "#e2553a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
