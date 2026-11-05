@@ -4,7 +4,9 @@ Application pour apprendre l'espagnol d'Espagne avant (et pendant) ton séjour �
 
 ## Ouvrir l'application
 
-**Le plus simple :** double-clique sur `index.html`. Elle s'ouvre dans ton navigateur, rien à installer.
+**En ligne (téléphone ou ordinateur) :** https://guillaumeplehar-star.github.io/rumbo-a-barcelona/
+
+**Sur ce PC :** double-clique sur `index.html`. Elle s'ouvre dans ton navigateur, rien à installer.
 
 > Utilise de préférence **Chrome** ou **Edge** : ce sont eux qui ont les meilleures voix espagnoles
 > et la reconnaissance vocale (exercices de prononciation).
