@@ -61,12 +61,15 @@ function route() {
   el.innerHTML = '';
   let section = '';
   const r = ROUTES.find(([re]) => re.test(path));
-  if (r) {
+  try {
+    if (!r) throw new Error('route inconnue : ' + path);
     const [re, view, sec] = r;
     const m = path.match(re);
     section = typeof sec === 'function' ? sec(m) : sec;
     view(el, m, new URLSearchParams(qs || ''));
-  } else {
+  } catch (e) {
+    // Adresse mal formée (ex. %E9 tronqué) ou écran en erreur : on affiche une page, jamais un écran vide
+    if (r) console.error(e);
     Views.notFound(el);
   }
   setActiveNav(section);

@@ -37,7 +37,8 @@ const parseRows = raw => raw.trim().split('\n').map(l => l.trim()).filter(Boolea
 const ALT_SEP = /\s+\/\s+/;      // « a / b » = deux formes acceptées
 const OPTIONAL = /\([^)]*\)/g;   // « (x) » = partie facultative
 const stripAccents = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '');
-const norm = s => String(s ?? '').toLowerCase().replace(/[’`]/g, "'").replace(/[…¿?¡!.,;:"«»]/g, ' ').replace(/\s+/g, ' ').trim();
+// Ponctuation, tirets et apostrophes = espaces : « T-casual » = « T casual », « d’acord » = « d'acord »
+const norm = s => String(s ?? '').toLowerCase().replace(/[…¿?¡!.,;:"«»'’`\-]/g, ' ').replace(/\s+/g, ' ').trim();
 const fold = s => stripAccents(norm(s));
 const ARTICLES = /^(el|la|los|las|un|una|unos|unas) /;
 
@@ -75,15 +76,14 @@ function levenshtein(a, b) {
 function checkAnswer(input, expected, { strict = false } = {}) {
   const n = norm(input);
   if (!n) return { ok: false, kind: 'empty' };
-  const vs = variants(expected);
-  if (vs.includes(n)) return { ok: true, kind: 'exact' };
-  const na = stripAccents(n);
-  if (vs.some(v => stripAccents(v) === na)) return { ok: !strict, kind: 'accents' };
-  if (!strict) {
-    const noArt = v => v.replace(ARTICLES, '');
-    if (vs.some(v => v !== noArt(v) && stripAccents(noArt(v)) === na)) return { ok: true, kind: 'article' };
-  }
-  if (vs.some(v => v.length > 5 && levenshtein(stripAccents(v), na) === 1)) return { ok: false, kind: 'typo' };
+  // En mode souple, les espaces ne comptent pas (« dacord » = « d'acord »)
+  const key = strict ? s => s : s => s.replace(/ /g, '');
+  const raw = variants(expected);
+  const vs = raw.map(key), k = key(n), ka = stripAccents(k);
+  if (vs.includes(k)) return { ok: true, kind: 'exact' };
+  if (vs.some(v => stripAccents(v) === ka)) return { ok: !strict, kind: 'accents' };
+  if (!strict && raw.some(v => ARTICLES.test(v) && stripAccents(key(v.replace(ARTICLES, ''))) === ka)) return { ok: true, kind: 'article' };
+  if (vs.some(v => v.length > 5 && levenshtein(stripAccents(v), ka) === 1)) return { ok: false, kind: 'typo' };
   return { ok: false, kind: 'wrong' };
 }
 const ANSWER_HINTS = { accents: 'Attention aux accents', article: 'N’oublie pas l’article', typo: 'Presque : une petite faute' };
@@ -102,8 +102,9 @@ function similarity(heard, expected) {
 function speechMatches(alternatives, expected) {
   const exps = variants(expected).map(v => stripAccents(v.replace(ARTICLES, '')));
   return alternatives.some(alt => {
-    const h = fold(alt).replace(ARTICLES, '');
-    return exps.some(e => h === e || h.includes(e) || similarity(h, e) >= 0.8);
+    // Mots entiers seulement : « o » ne doit pas être reconnu dans « hola »
+    const h = ` ${fold(alt).replace(ARTICLES, '')} `;
+    return exps.some(e => h.includes(` ${e} `) || similarity(h, e) >= 0.8);
   });
 }
 

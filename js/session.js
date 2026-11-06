@@ -15,7 +15,7 @@ function runSession(el, cfg) {
 
   const onKey = e => {
     if (!keyFn || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.target.matches('input, textarea, select') && e.key !== 'Enter') return;
+    if (e.target instanceof Element && e.target.matches('input, textarea, select') && e.key !== 'Enter') return;
     keyFn(e);
   };
   document.addEventListener('keydown', onKey);
@@ -190,7 +190,9 @@ function runSession(el, cfg) {
     const inp = $('#ans', el);
     later(() => inp.focus(), 60);
     if (listen) {
-      const play = rate => Speech.speak(w.es, { lang: w.lang, rate });
+      // Une seule forme à l'oral (« encantado / encantada » → « encantado ») : c'est celle qu'on attend
+      const spoken = w.es.split(ALT_SEP)[0];
+      const play = rate => Speech.speak(spoken, { lang: w.lang, rate });
       $('#play', el).onclick = () => { play(); inp.focus(); };
       $('#slow', el).onclick = () => { play(0.55); inp.focus(); };
       later(() => play(), 250);
@@ -198,6 +200,7 @@ function runSession(el, cfg) {
     const done = (res, given) => {
       $('#af', el).classList.add('locked');
       $$('#af input, #af button', el).forEach(x => { x.disabled = true; });
+      const card = SRS.get(w.id), dueBefore = card && card.due;
       record(w, res.ok, 4);
       const hint = answerHint(res);
       const parts = [];
@@ -210,7 +213,12 @@ function runSession(el, cfg) {
       Speech.speak(w.es, { lang: w.lang });
       const override = !res.ok && given ? `<button class="btn btn-ghost btn-sm" id="override">J’avais bon</button>` : '';
       feedback(res.ok, parts.join('<br>'), override);
-      if (override) $('#override', el).onclick = () => { correct++; gain(4); mistakes.delete(w.id); next(); };
+      if (override) {
+        $('#override', el).onclick = () => {
+          if (card) { card.due = dueBefore; Store.save(); }   // annule la remise en révision faite par record()
+          correct++; gain(4); mistakes.delete(w.id); next();
+        };
+      }
     };
     $('#af', el).onsubmit = e => {
       e.preventDefault();
