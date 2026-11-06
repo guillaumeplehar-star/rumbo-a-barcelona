@@ -5,10 +5,7 @@
 
 function V(id, icon, title, level, raw, extra = {}) {
   const lang = extra.lang || 'es';
-  const words = raw.trim().split('\n').map(l => l.trim()).filter(Boolean).map(line => {
-    const [es, fr, ex, exFr] = line.split('|').map(s => s && s.trim());
-    return { id: `${id}::${es}`, theme: id, es, fr, ex, exFr, lang };
-  });
+  const words = parseRows(raw).map(([es, fr, ex, exFr]) => ({ id: `${id}::${es}`, theme: id, es, fr, ex, exFr, lang }));
   return { id, icon, title, level, words, ...extra };
 }
 
@@ -1065,3 +1062,4 @@ Bon Nadal|Joyeux Noël (esp. Feliz Navidad)
 
 const ALL_WORDS = VOCAB.flatMap(t => t.words);
 const WORD_BY_ID = new Map(ALL_WORDS.map(w => [w.id, w]));
+const THEME_BY_ID = new Map(VOCAB.map(t => [t.id, t]));

@@ -9,18 +9,32 @@ function runSession(el, cfg) {
   const queue = cfg.items.slice();
   const total = queue.length;
   let completed = 0, correct = 0, xpEarned = 0;
+  let step = 0, alive = true;   // step change à chaque question ; alive passe à false quand on quitte la page
   const mistakes = new Map();
   let keyFn = null;
 
   const onKey = e => {
-    if (!keyFn || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!keyFn || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.target.matches('input, textarea, select') && e.key !== 'Enter') return;
     keyFn(e);
   };
   document.addEventListener('keydown', onKey);
-  setCleanup(() => document.removeEventListener('keydown', onKey));
+  document.body.classList.add('in-session');
+  setCleanup(() => {
+    alive = false;
+    document.removeEventListener('keydown', onKey);
+    document.body.classList.remove('in-session');
+  });
 
+  /** Lance fn plus tard, seulement si on est toujours sur la même question. */
+  const later = (fn, ms) => { const s = step; setTimeout(() => { if (alive && s === step) fn(); }, ms); };
   const gain = n => { xpEarned += n; Store.addXp(n); };
+  /** Enregistre le résultat d'une question (hors cartes mémoire). */
+  const record = (w, ok, xp, lapse = true) => {
+    completed++;
+    if (ok) { correct++; gain(xp); }
+    else { mistakes.set(w.id, w); if (lapse) SRS.lapse(w.id); }
+  };
   const autoplay = (text, lang) => { if (Store.settings.autoplay) Speech.speak(text, { lang }); };
 
   function frame(body, actions = '') {
@@ -35,20 +49,18 @@ function runSession(el, cfg) {
     </div>`;
   }
   function next() {
+    step++;
     keyFn = null;
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     if (!queue.length) return finish();
     R[mode](queue.shift());
   }
   function feedback(ok, html, extraBtn = '') {
-    $('.session-actions', el).innerHTML = `
-      <div class="feedback ${ok ? 'ok' : 'ko'}">
-        <div class="fb-text"><b>${ok ? pick(PRAISE) : 'Pas tout à fait…'}</b>${html ? `<div>${html}</div>` : ''}</div>
-        <div class="fb-btns">${extraBtn}<button class="btn ${ok ? 'btn-success' : 'btn-danger'}" id="cont">Continuer <kbd>Entrée</kbd></button></div>
-      </div>`;
+    $('.session-actions', el).innerHTML = feedbackBox(ok, ok ? pick(PRAISE) : 'Pas tout à fait…', html,
+      `${extraBtn}<button class="btn ${ok ? 'btn-success' : 'btn-danger'}" id="cont">Continuer <kbd>Entrée</kbd></button>`);
     $('#cont', el).onclick = next;
-    // petit délai : la touche Entrée qui a validé ne doit pas aussi passer à la suite
-    setTimeout(() => { keyFn = e => { if (e.key === 'Enter') { e.preventDefault(); next(); } }; }, 150);
+    // La touche qui a validé la réponse a déjà été traitée : pas de risque de double déclenchement.
+    keyFn = e => { if (e.key === 'Enter') { e.preventDefault(); next(); } };
   }
 
   const R = {
@@ -60,7 +72,7 @@ function runSession(el, cfg) {
       const backHtml = `
         <div class="fc-word">${esc(w.es)} ${sayBtn(w.es, w.lang)}</div>
         <div class="fc-trans">${esc(w.fr)}</div>
-        ${w.ex ? `<div class="fc-ex">${esc(w.ex)} ${sayBtn(w.ex, w.lang, 'say-sm')}<div class="muted">${esc(w.exFr || '')}</div></div>` : ''}`;
+        ${exampleHtml(w, 'fc-ex')}`;
       const frontHtml = front === 'es'
         ? `<div class="fc-word">${esc(w.es)} ${sayBtn(w.es, w.lang)}</div><div class="muted small">Que veut dire ce mot ?</div>`
         : `<div class="fc-trans big">${esc(w.fr)}</div><div class="muted small">Comment dit-on en ${langName(w.lang)} ?</div>`;
@@ -93,21 +105,22 @@ function runSession(el, cfg) {
     qcm(w) {
       const askEs = Math.random() < 0.5;
       const key = askEs ? 'fr' : 'es';
-      const pool = cfg.pool.length >= 4 ? cfg.pool : ALL_WORDS;
-      // On évite les intrus qui ont un sens proche (ex. « hola » et « buenas » = « salut »)
-      const toks = s => new Set(stripAccents(norm(s.replace(/\([^)]*\)/g, ' '))).split(/[\s/']+/).filter(t => t.length >= 4));
-      const target = toks(w.fr);
-      const close = o => [...toks(o.fr)].some(t => target.has(t));
-      const used = new Set([w[key]]);
-      const opts = [w];
-      for (const strict of [true, false]) {
-        for (const o of shuffle(pool)) {
-          if (opts.length === 4) break;
-          if (used.has(o[key]) || (strict && close(o))) continue;
+      const sameLang = cfg.pool.filter(o => o.lang === w.lang);
+      const candidates = shuffle(sameLang.length >= 4 ? sameLang : ALL_WORDS.filter(o => o.lang === w.lang));
+      const opts = [w], used = new Set([w[key]]);
+      // Intrus de sens éloigné d'abord ; les sens proches seulement si le thème est trop petit
+      const add = strict => {
+        for (const o of candidates) {
+          if (opts.length === 4) return;
+          if (used.has(o[key]) || (strict && closeMeaning(o, w))) continue;
           used.add(o[key]); opts.push(o);
         }
-      }
+      };
+      add(true);
+      if (opts.length < 4) add(false);
       const shown = shuffle(opts);
+      const isRight = j => shown[j].es === w.es || shown[j].fr === w.fr;
+
       frame(`<div class="prompt">
           <div class="prompt-label">${askEs ? 'Que veut dire…' : `Comment dit-on en ${langName(w.lang)}…`}</div>
           <div class="prompt-word ${askEs ? '' : 'fr'}">${esc(askEs ? w.es : w.fr)} ${askEs ? sayBtn(w.es, w.lang) : ''}</div>
@@ -118,13 +131,9 @@ function runSession(el, cfg) {
       const choose = i => {
         if (answered) return;
         answered = true;
-        const ok = shown[i] === w;
-        $$('.option', el).forEach((b, j) => {
-          b.disabled = true;
-          if (shown[j] === w) b.classList.add('correct'); else if (j === i) b.classList.add('wrong');
-        });
-        completed++;
-        if (ok) { correct++; gain(3); } else { mistakes.set(w.id, w); SRS.lapse(w.id); }
+        const ok = isRight(i);
+        revealChoice($$('.option', el), isRight, i);
+        record(w, ok, 3);
         Speech.speak(w.es, { lang: w.lang });
         feedback(ok, ok ? '' : `<b>${esc(w.es)}</b> = ${esc(w.fr)}`);
       };
@@ -144,32 +153,20 @@ function runSession(el, cfg) {
         </div>
         <div class="mic-zone"><button class="btn-mic" id="mic" aria-label="Parler">🎤</button><div id="heard" class="muted">Écoute le modèle 🔊, puis appuie sur le micro et parle.</div></div>`,
         `<button class="btn btn-ghost" id="skip">Passer</button>`);
-      let tries = 0, busy = false;
+      let tries = 0;
       const mic = $('#mic', el), heard = $('#heard', el);
       mic.onclick = async () => {
-        if (busy) return;
-        busy = true;
-        mic.classList.add('listening');
-        heard.textContent = 'Je t’écoute…';
-        try {
-          const alts = await Speech.listen(w.lang === 'ca' ? 'ca-ES' : 'es-ES');
-          if (!alts.length) { heard.textContent = 'Je n’ai rien entendu. Réessaie !'; return; }
-          tries++;
-          const ok = speechMatches(alts, w.es);
-          heard.innerHTML = `J’ai entendu : « <b>${esc(alts[0])}</b> »`;
-          if (ok || tries >= 3) {
-            completed++;
-            if (ok) { correct++; gain(3); } else mistakes.set(w.id, w);
-            mic.disabled = true;
-            feedback(ok, ok ? '' : `On attendait : <b>${esc(w.es)}</b>. Écoute et répète encore !`);
-          } else {
-            heard.innerHTML += `<br>Pas tout à fait… Réessaie ! (encore ${3 - tries} essai${3 - tries > 1 ? 's' : ''})`;
-          }
-        } catch (err) {
-          heard.textContent = Speech.micError(err);
-        } finally {
-          busy = false;
-          mic.classList.remove('listening');
+        const s = step;
+        const alts = await Speech.capture(mic, heard, w.lang);
+        if (!alts || !alive || s !== step) return;
+        tries++;
+        const ok = speechMatches(alts, w.es);
+        if (ok || tries >= 3) {
+          mic.disabled = true;
+          record(w, ok, 3, false);
+          feedback(ok, ok ? '' : `On attendait : <b>${esc(w.es)}</b>. Écoute et répète encore !`);
+        } else {
+          heard.innerHTML += `<br>Pas tout à fait… Réessaie ! (encore ${3 - tries} essai${3 - tries > 1 ? 's' : ''})`;
         }
       };
       $('#skip', el).onclick = () => { completed++; next(); };
@@ -186,35 +183,33 @@ function runSession(el, cfg) {
           : `<div class="prompt-label">Traduis en ${langName(w.lang)}</div><div class="prompt-word fr">${esc(w.fr)}</div>`}
       </div>
       <form id="af" class="answer" autocomplete="off">
-        <input id="ans" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Ta réponse…" lang="${w.lang}">
+        ${answerInput(`id="ans" placeholder="Ta réponse…" lang="${w.lang}"`)}
         ${accentBar()}
         <div class="row gap-s"><button class="btn btn-primary btn-lg grow" type="submit">Vérifier</button><button class="btn btn-ghost btn-lg" type="button" id="skip">Je ne sais pas</button></div>
       </form>`);
     const inp = $('#ans', el);
-    setTimeout(() => inp.focus(), 60);
+    later(() => inp.focus(), 60);
     if (listen) {
       const play = rate => Speech.speak(w.es, { lang: w.lang, rate });
       $('#play', el).onclick = () => { play(); inp.focus(); };
       $('#slow', el).onclick = () => { play(0.55); inp.focus(); };
-      setTimeout(() => play(), 250);
+      later(() => play(), 250);
     }
     const done = (res, given) => {
       $('#af', el).classList.add('locked');
       $$('#af input, #af button', el).forEach(x => { x.disabled = true; });
-      completed++;
-      const ok = res.ok;
-      if (ok) { correct++; gain(4); } else { mistakes.set(w.id, w); SRS.lapse(w.id); }
+      record(w, res.ok, 4);
+      const hint = answerHint(res);
       const parts = [];
-      if (res.kind === 'accents') parts.push(`Attention aux accents : <b>${esc(w.es)}</b>`);
-      else if (res.kind === 'article') parts.push(`N’oublie pas l’article : <b>${esc(w.es)}</b>`);
-      else if (!ok) {
+      if (res.ok && hint) parts.push(`${hint} : <b>${esc(w.es)}</b>`);
+      if (!res.ok) {
         parts.push(`Réponse : <b>${esc(w.es)}</b>`);
-        if (given) parts.push(`<span class="muted">Ta réponse : ${esc(given)}</span>${res.kind === 'typo' ? ' — presque, une petite faute !' : ''}`);
+        if (given) parts.push(`<span class="muted">Ta réponse : ${esc(given)}</span>${hint ? ` — ${hint}` : ''}`);
       }
       if (listen) parts.push(`<span class="muted">${esc(w.es)} = ${esc(w.fr)}</span>`);
       Speech.speak(w.es, { lang: w.lang });
-      const override = !ok && given ? `<button class="btn btn-ghost btn-sm" id="override">J’avais bon</button>` : '';
-      feedback(ok, parts.join('<br>'), override);
+      const override = !res.ok && given ? `<button class="btn btn-ghost btn-sm" id="override">J’avais bon</button>` : '';
+      feedback(res.ok, parts.join('<br>'), override);
       if (override) $('#override', el).onclick = () => { correct++; gain(4); mistakes.delete(w.id); next(); };
     };
     $('#af', el).onsubmit = e => {
@@ -231,18 +226,16 @@ function runSession(el, cfg) {
     const isFlash = mode === 'flash';
     const pct = total ? Math.round(correct / total * 100) : 0;
     const ms = [...mistakes.values()];
-    const good = isFlash || pct >= 80;
-    el.innerHTML = `<div class="session-end">
-      <div class="big-emoji">${good ? '🎉' : pct >= 50 ? '💪' : '📚'}</div>
-      <h1>${isFlash ? '¡Sesión terminada!' : pct >= 80 ? '¡Excelente!' : pct >= 50 ? '¡Bien hecho!' : '¡Ánimo!'}</h1>
-      <div class="end-stats">
+    el.innerHTML = endScreen(
+      isFlash || pct >= 80 ? '🎉' : pct >= 50 ? '💪' : '📚',
+      isFlash ? '¡Sesión terminada!' : pct >= 80 ? '¡Excelente!' : pct >= 50 ? '¡Bien hecho!' : '¡Ánimo!',
+      `<div class="end-stats">
         ${isFlash ? `<div><b>${total}</b><span>cartes</span></div>` : `<div><b>${correct}/${total}</b><span>bonnes réponses</span></div>`}
         <div><b>+${xpEarned}</b><span>XP gagnés</span></div>
         <div><b>${Store.todayXp()}/${Store.settings.goal}</b><span>objectif du jour</span></div>
       </div>
-      ${ms.length ? `<div class="card word-list left"><h3>À retravailler</h3>${ms.map(w => wordRow(w)).join('')}</div>` : ''}
-      <div class="row center gap-s wrap"><button class="btn btn-primary btn-lg" id="again">Recommencer</button><a class="btn btn-ghost btn-lg" href="${back}">Retour</a></div>
-    </div>`;
+      ${ms.length ? `<div class="card word-list left"><h3>À retravailler</h3>${ms.map(w => wordRow(w)).join('')}</div>` : ''}`,
+      `<button class="btn btn-primary btn-lg" id="again">Recommencer</button><a class="btn btn-ghost btn-lg" href="${back}">Retour</a>`);
     $('#again', el).onclick = () => route();
     keyFn = e => { if (e.key === 'Enter') { e.preventDefault(); route(); } };
   }

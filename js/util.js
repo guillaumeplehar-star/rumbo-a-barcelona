@@ -16,10 +16,9 @@ const sample = (arr, n) => shuffle(arr).slice(0, n);
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 
 /* ----- Dates : on compte en « jours » (index entier, fuseau local) ----- */
-const pad2 = n => String(n).padStart(2, '0');
 function dayIndex(d = new Date()) { return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5); }
 function keyToIndex(k) { const [y, m, d] = String(k).split('-').map(Number); return Math.floor(Date.UTC(y, m - 1, d) / 864e5); }
-function indexToKey(i) { const d = new Date(i * 864e5); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; }
+const indexToKey = i => new Date(i * 864e5).toISOString().slice(0, 10);
 const todayKey = () => indexToKey(dayIndex());
 function formatDay(i, opts = { day: 'numeric', month: 'long' }) {
   return new Date(i * 864e5).toLocaleDateString('fr-FR', { ...opts, timeZone: 'UTC' });
@@ -27,24 +26,27 @@ function formatDay(i, opts = { day: 'numeric', month: 'long' }) {
 /** Élément « du jour » : stable pendant toute la journée. */
 const dailyPick = (arr, salt = 0) => arr[((dayIndex() * 7 + salt) % arr.length + arr.length) % arr.length];
 
+/* ----- Seuils partagés ----- */
+const MASTERED_IVL = 21;   // jours d'intervalle à partir desquels un mot est « maîtrisé »
+const LESSON_PASS = 70;    // % à atteindre pour valider une leçon
+
+/* ----- Données texte : une ligne = des champs séparés par « | » ----- */
+const parseRows = raw => raw.trim().split('\n').map(l => l.trim()).filter(Boolean).map(l => l.split('|').map(s => s.trim()));
+
 /* ----- Comparaison des réponses ----- */
+const ALT_SEP = /\s+\/\s+/;      // « a / b » = deux formes acceptées
+const OPTIONAL = /\([^)]*\)/g;   // « (x) » = partie facultative
 const stripAccents = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '');
-function norm(s) {
-  return String(s ?? '').toLowerCase()
-    .replace(/[’`]/g, "'")
-    .replace(/\.\.\.|…/g, ' ')
-    .replace(/[¿?¡!.,;:"«»]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+const norm = s => String(s ?? '').toLowerCase().replace(/[’`]/g, "'").replace(/[…¿?¡!.,;:"«»]/g, ' ').replace(/\s+/g, ' ').trim();
+const fold = s => stripAccents(norm(s));
 const ARTICLES = /^(el|la|los|las|un|una|unos|unas) /;
 
-/** Toutes les formes acceptées : « a / b » = deux réponses possibles, « (x) » = facultatif. */
+/** Toutes les formes acceptées d'une réponse. */
 function variants(expected) {
-  const list = Array.isArray(expected) ? expected : String(expected).split(/\s+\/\s+/);
+  const list = Array.isArray(expected) ? expected : String(expected).split(ALT_SEP);
   const out = new Set();
   for (const raw of list) {
-    for (const f of [raw.replace(/\([^)]*\)/g, ' '), raw.replace(/[()]/g, '')]) {
+    for (const f of [raw.replace(OPTIONAL, ' '), raw.replace(/[()]/g, '')]) {
       const n = norm(f);
       if (n) out.add(n);
     }
@@ -84,10 +86,13 @@ function checkAnswer(input, expected, { strict = false } = {}) {
   if (vs.some(v => v.length > 5 && levenshtein(stripAccents(v), na) === 1)) return { ok: false, kind: 'typo' };
   return { ok: false, kind: 'wrong' };
 }
+const ANSWER_HINTS = { accents: 'Attention aux accents', article: 'N’oublie pas l’article', typo: 'Presque : une petite faute' };
+/** Message court qui accompagne une réponse « presque juste » ('' sinon). */
+const answerHint = res => ANSWER_HINTS[res.kind] || '';
 
 /** Proportion des mots attendus retrouvés dans ce qui a été dit (reconnaissance vocale). */
 function similarity(heard, expected) {
-  const toks = s => stripAccents(norm(s)).split(' ').filter(Boolean);
+  const toks = s => fold(s).split(' ').filter(Boolean);
   const exp = toks(expected), got = toks(heard);
   if (!exp.length) return 0;
   let hit = 0;
@@ -97,9 +102,18 @@ function similarity(heard, expected) {
 function speechMatches(alternatives, expected) {
   const exps = variants(expected).map(v => stripAccents(v.replace(ARTICLES, '')));
   return alternatives.some(alt => {
-    const h = stripAccents(norm(alt)).replace(ARTICLES, '');
+    const h = fold(alt).replace(ARTICLES, '');
     return exps.some(e => h === e || h.includes(e) || similarity(h, e) >= 0.8);
   });
+}
+
+/** Deux mots de vocabulaire ont-ils un sens proche ? (même espagnol, ou un mot commun dans la traduction) */
+const glossWords = s => new Set(fold(String(s).replace(OPTIONAL, ' ')).split(/[\s/']+/).filter(t => t.length >= 4));
+function closeMeaning(a, b) {
+  if (a.es === b.es || a.fr === b.fr) return true;
+  const wa = glossWords(a.fr);
+  for (const t of glossWords(b.fr)) if (wa.has(t)) return true;
+  return false;
 }
 
 /* ----- Petits morceaux d'interface ----- */
@@ -112,10 +126,24 @@ function progressBar(p, cls = '') {
 }
 const levelBadge = l => `<span class="badge lvl-${l.toLowerCase()}">${l}</span>`;
 
+/** Bandeau de résultat vert / rouge. */
+function feedbackBox(ok, title, body = '', btns = '') {
+  return `<div class="feedback ${ok ? 'ok' : 'ko'}"><div class="fb-text"><b>${title}</b>${body ? `<div>${body}</div>` : ''}</div>${btns ? `<div class="fb-btns">${btns}</div>` : ''}</div>`;
+}
+/** Verrouille des boutons de choix : la/les bonne(s) en vert, le mauvais choix en rouge. */
+function revealChoice(buttons, isCorrect, chosen) {
+  buttons.forEach((b, j) => {
+    b.disabled = true;
+    if (isCorrect(j)) b.classList.add('correct'); else if (j === chosen) b.classList.add('wrong');
+  });
+}
+/** Champ de réponse en espagnol : sans correction automatique ni majuscule forcée. */
+const answerInput = (attrs = '') => `<input type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" ${attrs}>`;
+
 const ACCENTS = ['á', 'é', 'í', 'ó', 'ú', 'ñ', 'ü', '¿', '¡'];
 const accentBar = () => `<div class="accent-bar" aria-label="Caractères espagnols">${ACCENTS.map(c => `<button type="button" class="acc" data-acc="${c}" tabindex="-1">${c}</button>`).join('')}</div>`;
 
-let lastInput = null;
+let lastInput = null;   // remis à null à chaque changement de page (app.js)
 document.addEventListener('focusin', e => {
   if (e.target.matches('input[type=text], input:not([type])')) lastInput = e.target;
 });
@@ -124,7 +152,7 @@ document.addEventListener('pointerdown', e => { if (e.target.closest('.acc')) e.
 document.addEventListener('click', e => {
   const b = e.target.closest('.acc');
   if (!b) return;
-  let inp = lastInput && document.body.contains(lastInput) && !lastInput.disabled ? lastInput : null;
+  let inp = lastInput && lastInput.isConnected && !lastInput.disabled ? lastInput : null;
   if (!inp) inp = b.closest('section, form, .card, .session')?.querySelector('input[type=text]:not([disabled])');
   if (!inp) return;
   const s = inp.selectionStart ?? inp.value.length, en = inp.selectionEnd ?? inp.value.length;

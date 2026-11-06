@@ -37,40 +37,35 @@ const SRS = {
     if (d < 365) return Math.round(d / 30) + ' mois';
     return Math.round(d / 365) + ' an(s)';
   },
-  status(id) {
+  status(id, today = dayIndex()) {
     const c = this.get(id);
     if (!c) return 'new';
-    if (c.ivl >= 21) return 'mastered';
-    if (c.due <= dayIndex()) return 'due';
+    if (c.ivl >= MASTERED_IVL) return 'mastered';
+    if (c.due <= today) return 'due';
     return 'learning';
   },
 };
 const STATUS_LABEL = { new: 'Nouveau', learning: 'En cours', due: 'À revoir', mastered: 'Maîtrisé' };
 
 const Vocab = {
-  theme(id) { return VOCAB.find(t => t.id === id); },
+  theme(id) { return THEME_BY_ID.get(id); },
   dueIds(themeId) {
     const today = dayIndex();
     return Object.entries(Store.state.cards)
       .filter(([id, c]) => c.due <= today && WORD_BY_ID.has(id) && (!themeId || WORD_BY_ID.get(id).theme === themeId))
       .map(([id]) => id);
   },
-  stats(theme) {
+  newWords(theme) { return theme.words.filter(w => SRS.isNew(w.id)); },
+  count(words) {
     let seen = 0, mastered = 0;
-    for (const w of theme.words) {
+    for (const w of words) {
       const c = Store.state.cards[w.id];
-      if (c) seen++;
-      if (c && c.ivl >= 21) mastered++;
-    }
-    return { total: theme.words.length, seen, mastered };
-  },
-  summary() {
-    let seen = 0, mastered = 0;
-    for (const [id, c] of Object.entries(Store.state.cards)) {
-      if (!WORD_BY_ID.has(id)) continue;
+      if (!c) continue;
       seen++;
-      if (c.ivl >= 21) mastered++;
+      if (c.ivl >= MASTERED_IVL) mastered++;
     }
-    return { seen, mastered };
+    return { total: words.length, seen, mastered };
   },
+  stats(theme) { return this.count(theme.words); },
+  summary() { return this.count(ALL_WORDS); },
 };

@@ -25,7 +25,6 @@ const Store = (() => {
     newSeen: {},    // 'AAAA-MM-JJ' -> nouveaux mots découverts
     lessons: {},    // id leçon -> meilleur score (%)
     dialogues: {},  // id dialogue -> true quand terminé
-    totalXp: 0,
   });
 
   function load() {
@@ -39,10 +38,19 @@ const Store = (() => {
     return defaults();
   }
 
+  let pending = false;
+  function write() {
+    pending = false;
+    try { localStorage.setItem(KEY, JSON.stringify(api.state)); } catch (e) { console.warn(e); }
+  }
+
   const api = {
     state: load(),
+    /** Enregistre à la fin de la tâche en cours : plusieurs modifications d'affilée = une seule écriture. */
     save() {
-      try { localStorage.setItem(KEY, JSON.stringify(api.state)); } catch (e) { console.warn(e); }
+      if (pending) return;
+      pending = true;
+      queueMicrotask(write);
     },
     get settings() { return api.state.settings; },
     set(key, value) { api.state.settings[key] = value; api.save(); },
@@ -52,11 +60,11 @@ const Store = (() => {
       const k = todayKey();
       const before = api.state.xp[k] || 0;
       api.state.xp[k] = before + n;
-      api.state.totalXp += n;
       api.save();
-      document.dispatchEvent(new CustomEvent('xp', { detail: { n, before, after: before + n } }));
+      document.dispatchEvent(new CustomEvent('xp', { detail: { before, after: before + n } }));
     },
     todayXp() { return api.state.xp[todayKey()] || 0; },
+    totalXp() { return Object.values(api.state.xp).reduce((a, b) => a + b, 0); },
     streak() {
       const xp = api.state.xp;
       let i = dayIndex();
@@ -66,7 +74,10 @@ const Store = (() => {
       return c;
     },
     newSeenToday() { return api.state.newSeen[todayKey()] || 0; },
-    markNewSeen() { const k = todayKey(); api.state.newSeen[k] = (api.state.newSeen[k] || 0) + 1; api.save(); },
+    markNewSeen() { const k = todayKey(); api.state.newSeen[k] = api.newSeenToday() + 1; api.save(); },
+    /** Nouveaux mots qu'on peut encore découvrir aujourd'hui. */
+    newQuota() { return Math.max(0, api.state.settings.newPerDay - api.newSeenToday()); },
+    lessonPassed(id) { return (api.state.lessons[id] ?? 0) >= LESSON_PASS; },
     planStart() { return api.state.settings.planStart || api.state.created; },
 
     exportJson() { return JSON.stringify(api.state, null, 2); },

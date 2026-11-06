@@ -5,6 +5,8 @@ const PERSONS = ['yo', 'tú', 'él / ella / usted', 'nosotros', 'vosotros', 'ell
 const IMP_LABELS = ['', 'tú', 'usted', 'nosotros', 'vosotros', 'ustedes'];
 const PRON_CHOICES = [['yo'], ['tú'], ['él', 'ella', 'usted'], ['nosotros', 'nosotras'], ['vosotros', 'vosotras'], ['ellos', 'ellas', 'ustedes']];
 
+/* persons : personnes qui existent à ce temps (par défaut les 6) ; labels : libellés à afficher ;
+   prefix : mot ajouté devant le pronom ; sayPron : false = on lit la forme seule */
 const TENSES = [
   { id: 'pres', es: 'Presente', fr: 'Présent' },
   { id: 'perf', es: 'Pretérito perfecto', fr: 'Passé composé (aujourd’hui, expérience)' },
@@ -12,8 +14,8 @@ const TENSES = [
   { id: 'imperf', es: 'Pretérito imperfecto', fr: 'Imparfait (description, habitude)' },
   { id: 'fut', es: 'Futuro', fr: 'Futur' },
   { id: 'cond', es: 'Condicional', fr: 'Conditionnel' },
-  { id: 'subj', es: 'Presente de subjuntivo', fr: 'Subjonctif présent' },
-  { id: 'imp', es: 'Imperativo', fr: 'Impératif (affirmatif)' },
+  { id: 'subj', es: 'Presente de subjuntivo', fr: 'Subjonctif présent', prefix: 'que ' },
+  { id: 'imp', es: 'Imperativo', fr: 'Impératif (affirmatif)', persons: [1, 2, 3, 4, 5], labels: IMP_LABELS, sayPron: false },
 ];
 
 /* g : irr = irrégulier, sc = diphtongue (stem change), reg = régulier
@@ -94,6 +96,7 @@ const Conj = (() => {
   const STRONG = [0, 1, 2, 5];   // personnes « botte »
 
   const type = v => v.inf.slice(-2);              // ar | er | ir
+  const grp = v => (type(v) === 'ar' ? 'ar' : 'er'); // -er et -ir partagent ces terminaisons
   const stem = v => v.inf.slice(0, -2);
 
   function strong(st, sc) {
@@ -139,14 +142,14 @@ const Conj = (() => {
       return f;
     }
     const t = type(v);
-    return E.indef[t === 'ar' ? 'ar' : 'er'].map((e, i) => {
+    return E.indef[grp(v)].map((e, i) => {
       const s = t === 'ir' && v.sc && (i === 2 || i === 5) ? weak(stem(v)) : stem(v);
       return spell(s, e, t) + e;
     });
   }
   function imperf(v) {
     if (v.imperf) return v.imperf;
-    return E.imperf[type(v) === 'ar' ? 'ar' : 'er'].map(e => stem(v) + e);
+    return E.imperf[grp(v)].map(e => stem(v) + e);
   }
   const fut = v => E.fut.map(e => (v.fut || v.inf) + e);
   const cond = v => E.cond.map(e => (v.fut || v.inf) + e);
@@ -154,7 +157,7 @@ const Conj = (() => {
   const perf = v => HABER.map(h => h + ' ' + part(v));
   function subj(v) {
     if (v.subj) return v.subj;
-    const t = type(v), end = E.subj[t === 'ar' ? 'ar' : 'er'];
+    const t = type(v), end = E.subj[grp(v)];
     const yo = v.yo || (v.pres && v.pres[0]);
     if (yo && yo.endsWith('o')) { const s = yo.slice(0, -1); return end.map(e => s + e); }
     return end.map((e, i) => {
@@ -182,5 +185,11 @@ const Conj = (() => {
   /** Formes « si le verbe était régulier », pour surligner les irrégularités. */
   const regular = (v, tense) => FN[tense]({ inf: v.inf });
 
-  return { forms, regular, part, ger };
+  /* Présentation d'un temps (t = une entrée de TENSES) */
+  const persons = t => t.persons || [0, 1, 2, 3, 4, 5];
+  const label = (t, i) => (t.labels || PERSONS)[i];
+  /** Texte à lire à voix haute : « yo hablo », « que yo hable », « habla » (impératif). */
+  const say = (t, i, form, pron = PRON_CHOICES[i][0]) => (t.sayPron === false ? form : `${t.prefix || ''}${pron} ${form}`);
+
+  return { forms, regular, part, ger, persons, label, say };
 })();

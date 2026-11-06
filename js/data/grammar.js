@@ -690,3 +690,5 @@ Radical sp√©cial + <em>-e, -iste, -o, -imos, -isteis, -ieron</em> : <em>tener ‚Ü
   ] },
 
 ];
+
+const GRAMMAR_BY_ID = new Map(GRAMMAR.map(g => [g.id, g]));

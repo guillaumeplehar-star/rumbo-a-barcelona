@@ -1,14 +1,18 @@
 'use strict';
 /* ===== Dialogues de situations réelles à Barcelone =====
    Lignes : « A ou B | espagnol | français ». Vocabulaire : « espagnol | français ».
-   Quiz : [question, [options], index de la bonne réponse] */
+   Quiz : [question, [options], index de la bonne réponse]
+   Le rôle de l'apprenant est celui qui s'appelle « Tú ». */
 
 function D(id, icon, title, level, roles, context, rawLines, rawVocab, quiz) {
-  const parse = raw => raw.trim().split('\n').map(l => l.trim()).filter(Boolean).map(l => l.split('|').map(s => s.trim()));
+  const me = Object.keys(roles).find(k => roles[k] === 'Tú') || 'B';
+  const other = me === 'A' ? 'B' : 'A';
   return {
-    id, icon, title, level, roles, context,
-    lines: parse(rawLines).map(([s, es, fr]) => ({ s, es, fr })),
-    vocab: parse(rawVocab),
+    id, icon, title, level, roles, context, me,
+    // Chaque personnage garde la même voix partout (lecture complète, jeu de rôle)
+    voice: { [me]: { alt: true, pitch: 1.1 }, [other]: { pitch: 0.95 } },
+    lines: parseRows(rawLines).map(([s, es, fr]) => ({ s, es, fr })),
+    vocab: parseRows(rawVocab),
     quiz,
   };
 }
@@ -345,3 +349,5 @@ mejorar|aller mieux
 ]),
 
 ];
+
+const DIALOGUE_BY_ID = new Map(DIALOGUES.map(d => [d.id, d]));

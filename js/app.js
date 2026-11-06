@@ -31,44 +31,45 @@ const ROUTES = [
   [/^settings$/, el => Views.settings(el), 'settings'],
 ];
 
-function renderNav(section) {
-  const link = n => `<a href="${n.href}" class="${n.key === section ? 'active' : ''}"><span class="ni">${n.icon}</span><span>${n.label}</span></a>`;
+/** Construit les deux barres de navigation une seule fois ; route() ne fait que changer l'onglet actif. */
+function renderNav() {
+  const link = n => `<a href="${n.href}" data-key="${n.key}"><span class="ni">${n.icon}</span><span>${n.label}</span></a>`;
   $('#nav').innerHTML = NAV.map(link).join('');
   $('#bottom-nav').innerHTML = NAV.filter(n => !n.sideOnly).map(link).join('');
 }
+function setActiveNav(section) {
+  $$('#nav a, #bottom-nav a').forEach(a => a.classList.toggle('active', a.dataset.key === section));
+}
 
+const xpPillHtml = () => `⭐ ${Store.todayXp()}<small>/${Store.settings.goal}</small>`;
 function renderTopStats() {
   const days = daysToDeparture();
   const dLabel = days > 0 ? `J-${days}` : days === 0 ? 'Jour J' : `J+${-days}`;
   $('#top-stats').innerHTML = `
     <a class="pill" href="#/plan" title="Jours avant le départ">✈️ ${dLabel}</a>
     <span class="pill" title="Jours de suite">🔥 ${Store.streak()}</span>
-    <span class="pill" id="xp-pill" title="XP aujourd’hui / objectif">⭐ ${Store.todayXp()}<small>/${Store.settings.goal}</small></span>`;
+    <span class="pill" id="xp-pill" title="XP aujourd’hui / objectif">${xpPillHtml()}</span>`;
 }
 
 function route() {
   if (currentCleanup) { try { currentCleanup(); } catch (e) { console.warn(e); } }
   currentCleanup = null;
   Speech.stop();
-  const raw = location.hash.replace(/^#\/?/, '');
-  const [path, qs] = raw.split('?');
-  const query = new URLSearchParams(qs || '');
+  lastInput = null;
+  const [path, qs] = location.hash.replace(/^#\/?/, '').split('?');
   const el = $('#app');
+  el.innerHTML = '';
   let section = '';
-  let found = false;
-  for (const [re, view, sec] of ROUTES) {
+  const r = ROUTES.find(([re]) => re.test(path));
+  if (r) {
+    const [re, view, sec] = r;
     const m = path.match(re);
-    if (!m) continue;
-    found = true;
     section = typeof sec === 'function' ? sec(m) : sec;
-    el.innerHTML = '';
-    view(el, m, query);
-    break;
+    view(el, m, new URLSearchParams(qs || ''));
+  } else {
+    Views.notFound(el);
   }
-  if (!found) Views.notFound(el);
-  document.body.dataset.section = section;
-  document.body.classList.toggle('in-session', path.startsWith('study/'));
-  renderNav(section);
+  setActiveNav(section);
   renderTopStats();
   window.scrollTo(0, 0);
 }
@@ -87,15 +88,18 @@ document.addEventListener('click', e => {
 
 document.addEventListener('xp', e => {
   const { before, after } = e.detail;
-  renderTopStats();
+  if (before === 0) renderTopStats();          // premier XP du jour : la série change aussi
   const pill = $('#xp-pill');
-  if (pill) { pill.classList.remove('bump'); void pill.offsetWidth; pill.classList.add('bump'); }
+  if (!pill) return;
+  pill.innerHTML = xpPillHtml();
+  pill.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: 450 });
   const goal = Store.settings.goal;
   if (before < goal && after >= goal) toast(`🎉 Objectif du jour atteint : ${goal} XP ! ¡Enhorabuena!`, 'ok');
 });
 
 window.addEventListener('hashchange', route);
 window.addEventListener('DOMContentLoaded', () => {
+  renderNav();
   route();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
